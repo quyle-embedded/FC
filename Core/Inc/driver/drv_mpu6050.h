@@ -163,6 +163,12 @@ typedef struct
   float   angle_X;
   float   angle_Y;
   float   angle_Z;
+  float   kalman_angle_X;
+  float   kalman_angle_Y;
+  float   kalman_angle_Z;
+  float   gyro_angle_X;
+  float   gyro_angle_Y;
+  float   gyro_angle_Z;
 } drv_mpu6050_config_t;
 
 /* Public macros ------------------------------------------------------ */
@@ -236,6 +242,10 @@ drv_mpu6050_err_t drv_mpu6050_read_all(drv_mpu6050_config_t *mpu6050_data);
  *            - Other: in other cases
  */
 drv_mpu6050_err_t drv_mpu6050_read_angles(drv_mpu6050_config_t *mpu6050_data);
+
+drv_mpu6050_err_t drv_mpu6050_read_angles_filter(drv_mpu6050_config_t *mpu6050_data);
+
+drv_mpu6050_err_t drv_mpu6050_read_angles_atan2(drv_mpu6050_config_t *mpu6050_data);
 
 /**
  * @}

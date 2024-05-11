@@ -14,6 +14,8 @@
 /* Includes ----------------------------------------------------------- */
 #include "drv_mpu6050.h"
 
+#include "kalman_filter.h"
+
 #include <math.h>
 /* Private defines ---------------------------------------------------- */
 
@@ -35,6 +37,9 @@
 /* Public variables --------------------------------------------------- */
 
 /* Private variables -------------------------------------------------- */
+
+kalman_filter_t kalman_X;
+kalman_filter_t kalman_Y;
 
 static uint32_t prev_millis = 0;
 static double   acc_X, acc_Y, gyro_X, gyro_Y, gyro_Z;
@@ -133,6 +138,16 @@ drv_mpu6050_err_t drv_mpu6050_init(drv_mpu6050_config_t *mpu6050_data, uint8_t d
   case DRV_MPU6050_GYROSCOPE_2000s: mpu6050_data->gyro_mult = (float) 1 / DRV_MPU6050_GYRO_SENS_2000;
   default: break;
   }
+
+  /* Setup kalman filter config */
+  kalman_filter_init(&kalman_X);
+  kalman_filter_init(&kalman_Y);
+
+  drv_mpu6050_read_angles(mpu6050_data);
+
+  /* start angle filter */
+  kalman_X.angle = mpu6050_data->angle_X;
+  kalman_Y.angle = mpu6050_data->angle_Y;
 
   /* Return OK */
   return DRV_MPU6050_OK;
@@ -259,6 +274,116 @@ drv_mpu6050_err_t drv_mpu6050_read_angles(drv_mpu6050_config_t *mpu6050_data)
   mpu6050_data->angle_X = 0.98 * (mpu6050_data->angle_X + gyro_X * duration) + 0.02 * acc_X;
   mpu6050_data->angle_Y = 0.98 * (mpu6050_data->angle_Y + gyro_Y * duration) + 0.02 * acc_Y;
   mpu6050_data->angle_Z = mpu6050_data->angle_Z + gyro_Z * duration;
+
+  /* Return OK */
+  return DRV_MPU6050_OK;
+}
+
+drv_mpu6050_err_t drv_mpu6050_read_angles_filter(drv_mpu6050_config_t *mpu6050_data)
+{
+  uint8_t data[14];
+  int16_t temp;
+
+  /* Check parameter */
+  DRV_MPU6050_CHECK_PARA(mpu6050_data != NULL && mpu6050_data->i2c_is_device_ready != NULL && mpu6050_data->i2c_read_at != NULL
+                         && mpu6050_data->i2c_write_at != NULL)
+
+  /* Check if device is connected */
+  DRV_MPU6050_CHECK_ERROR((drv_mpu6050_is_ready(mpu6050_data) == DRV_MPU6050_OK), DRV_MPU6050_ERROR)
+
+  /* Read full raw data, 14bytes */
+  drv_mpu6050_read_data(mpu6050_data, DRV_MPU6050_ACCEL_XOUT_H, (uint8_t *) data, 14);
+
+  /* Format accelerometer data */
+  mpu6050_data->accelerometer_X = (int16_t) (data[0] << 8 | data[1]);
+  mpu6050_data->accelerometer_Y = (int16_t) (data[2] << 8 | data[3]);
+  mpu6050_data->accelerometer_Z = (int16_t) (data[4] << 8 | data[5]);
+
+  /* Format temperature */
+  temp                      = (data[6] << 8 | data[7]);
+  mpu6050_data->temperature = (float) ((float) ((int16_t) temp) / (float) 340.0 + (float) 36.53);
+
+  /* Format gyroscope data */
+  mpu6050_data->gyroscope_X = (int16_t) (data[8] << 8 | data[9]);
+  mpu6050_data->gyroscope_Y = (int16_t) (data[10] << 8 | data[11]);
+  mpu6050_data->gyroscope_Z = (int16_t) (data[12] << 8 | data[13]);
+
+  acc_X = atan((mpu6050_data->accelerometer_Y * mpu6050_data->acce_mult)
+               / sqrt(pow((mpu6050_data->accelerometer_X * mpu6050_data->acce_mult), 2) + pow((mpu6050_data->accelerometer_Z * mpu6050_data->acce_mult), 2)))
+          * RAD_TO_DEG;
+  acc_Y = atan(-1 * (mpu6050_data->accelerometer_X * mpu6050_data->acce_mult)
+               / sqrt(pow((mpu6050_data->accelerometer_Y * mpu6050_data->acce_mult), 2) + pow((mpu6050_data->accelerometer_Z * mpu6050_data->acce_mult), 2)))
+          * RAD_TO_DEG;
+
+  gyro_X = (mpu6050_data->gyroscope_X + gyro_X_offset) * mpu6050_data->gyro_mult;
+  gyro_Y = (mpu6050_data->gyroscope_Y + gyro_Y_offset) * mpu6050_data->gyro_mult;
+  gyro_Z = (mpu6050_data->gyroscope_Z + gyro_Z_offset) * mpu6050_data->gyro_mult;
+
+  uint32_t curMillis = HAL_GetTick();
+  double   duration  = (curMillis - prev_millis) * 1e-3;
+  prev_millis        = curMillis;
+
+  // This fixes the transition problem when the accelerometer angle jumps between -180 and 180 degrees
+  if ((acc_Y < -90 && mpu6050_data->kalman_angle_Y > 90) || (acc_Y > 90 && mpu6050_data->kalman_angle_Y < -90))
+  {
+    kalman_Y.angle               = acc_Y;
+    mpu6050_data->kalman_angle_Y = acc_Y;
+  }
+  else
+    mpu6050_data->kalman_angle_Y = kalman_filter_get_angle(&kalman_Y, acc_Y, gyro_Y, duration);  // Calculate the angle using a Kalman filter
+
+  if (fabs(mpu6050_data->kalman_angle_Y) > 90)
+    gyro_X = -gyro_X;                                                                          // Invert rate, so it fits the restriced accelerometer reading
+  mpu6050_data->kalman_angle_X = kalman_filter_get_angle(&kalman_X, acc_X, gyro_X, duration);  // Calculate the angle using a Kalman filter
+
+  /* Return OK */
+  return DRV_MPU6050_OK;
+}
+
+drv_mpu6050_err_t drv_mpu6050_read_angles_atan2(drv_mpu6050_config_t *mpu6050_data)
+{
+  uint8_t data[14];
+  int16_t temp;
+
+  /* Check parameter */
+  DRV_MPU6050_CHECK_PARA(mpu6050_data != NULL && mpu6050_data->i2c_is_device_ready != NULL && mpu6050_data->i2c_read_at != NULL
+                         && mpu6050_data->i2c_write_at != NULL)
+
+  /* Check if device is connected */
+  DRV_MPU6050_CHECK_ERROR((drv_mpu6050_is_ready(mpu6050_data) == DRV_MPU6050_OK), DRV_MPU6050_ERROR)
+
+  /* Read full raw data, 14bytes */
+  drv_mpu6050_read_data(mpu6050_data, DRV_MPU6050_ACCEL_XOUT_H, (uint8_t *) data, 14);
+
+  /* Format accelerometer data */
+  mpu6050_data->accelerometer_X = (int16_t) (data[0] << 8 | data[1]);
+  mpu6050_data->accelerometer_Y = (int16_t) (data[2] << 8 | data[3]);
+  mpu6050_data->accelerometer_Z = (int16_t) (data[4] << 8 | data[5]);
+
+  /* Format temperature */
+  temp                      = (data[6] << 8 | data[7]);
+  mpu6050_data->temperature = (float) ((float) ((int16_t) temp) / (float) 340.0 + (float) 36.53);
+
+  /* Format gyroscope data */
+  mpu6050_data->gyroscope_X = (int16_t) (data[8] << 8 | data[9]);
+  mpu6050_data->gyroscope_Y = (int16_t) (data[10] << 8 | data[11]);
+  mpu6050_data->gyroscope_Z = (int16_t) (data[12] << 8 | data[13]);
+
+  /* Calculate angles using atan2 method*/
+  acc_X = atan2(mpu6050_data->accelerometer_Y * mpu6050_data->acce_mult, mpu6050_data->accelerometer_Z * mpu6050_data->acce_mult) * RAD_TO_DEG;
+  acc_Y = atan2(mpu6050_data->accelerometer_X * mpu6050_data->acce_mult, mpu6050_data->accelerometer_Z * mpu6050_data->acce_mult) * RAD_TO_DEG;
+
+  gyro_X = (mpu6050_data->gyroscope_X + gyro_X_offset) * mpu6050_data->gyro_mult;
+  gyro_Y = (mpu6050_data->gyroscope_Y + gyro_Y_offset) * mpu6050_data->gyro_mult;
+  gyro_Z = (mpu6050_data->gyroscope_Z + gyro_Z_offset) * mpu6050_data->gyro_mult;
+
+  uint32_t curMillis = HAL_GetTick();
+  double   duration  = (curMillis - prev_millis) * 1e-3;
+  prev_millis        = curMillis;
+
+  mpu6050_data->angle_X = 0.98 * (mpu6050_data->angle_X + gyro_X * duration) + 0.02 * acc_X;
+  mpu6050_data->angle_Y = 0.98 * (mpu6050_data->angle_Y + gyro_Y * duration) + 0.02 * acc_Y;
+  mpu6050_data->angle_Z += gyro_Z * duration;
 
   /* Return OK */
   return DRV_MPU6050_OK;
