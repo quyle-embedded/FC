@@ -46,6 +46,6 @@ system_angle_error_t system_angle_init(void);
  *  - SYSTEM_ANGLE_ERROR : system angle error
  */
 
-system_angle_error_t system_angle_get_value(float *angle_X, float *angle_Y, float *angle_Z);
+system_angle_error_t system_angle_get_value(float *angle_X, float *angle_Y, float *angle_Z, uint8_t filter);
 
 #endif /* __SYSTEM_ANGLE_H */

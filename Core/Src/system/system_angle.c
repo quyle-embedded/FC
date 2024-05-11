@@ -46,19 +46,28 @@ system_angle_error_t system_angle_init(void)
   mpu6050.i2c_write_at        = bsp_i2c1_write_mem;
 
   mpu6050.accelerometer_config = DRV_MPU6050_ACCELEROMETER_2G;
-  mpu6050.gyroscope_config = DRV_MPU6050_GYROSCOPE_250s;
+  mpu6050.gyroscope_config     = DRV_MPU6050_GYROSCOPE_250s;
 
   SYSTEM_ANGLE_CHECK_ERROR(drv_mpu6050_init(&mpu6050, 0) == DRV_MPU6050_OK, SYSTEM_ANGLE_ERROR)
   return SYSTEM_ANGLE_OK;
 }
 
-system_angle_error_t system_angle_get_value(float *angle_X, float *angle_Y, float *angle_Z)
+system_angle_error_t system_angle_get_value(float *angle_X, float *angle_Y, float *angle_Z, uint8_t filter)
 {
-  SYSTEM_ANGLE_CHECK_ERROR(drv_mpu6050_read_angles(&mpu6050) == DRV_MPU6050_OK, SYSTEM_ANGLE_ERROR)
-
-  *angle_X = mpu6050.angle_X;
-  *angle_Y = mpu6050.angle_Y;
-  *angle_Z = mpu6050.angle_Z;
+  if (!filter)
+  {
+    SYSTEM_ANGLE_CHECK_ERROR(drv_mpu6050_read_angles_atan2(&mpu6050) == DRV_MPU6050_OK, SYSTEM_ANGLE_ERROR)
+    *angle_X = mpu6050.angle_X;
+    *angle_Y = mpu6050.angle_Y;
+    *angle_Z = mpu6050.angle_Z;
+  }
+  else
+  {
+    SYSTEM_ANGLE_CHECK_ERROR(drv_mpu6050_read_angles_filter(&mpu6050) == DRV_MPU6050_OK, SYSTEM_ANGLE_ERROR)
+    *angle_X = mpu6050.kalman_angle_X;
+    *angle_Y = mpu6050.kalman_angle_Y;
+    *angle_Z = mpu6050.kalman_angle_Z;
+  }
 
   return SYSTEM_ANGLE_OK;
 }
