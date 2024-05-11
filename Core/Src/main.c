@@ -127,11 +127,11 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    if (system_angle_get_value(&angle_X, &angle_Y, &angle_Z) == SYSTEM_ANGLE_ERROR)
-      printf("System angle get value error\r\n");
+    if (system_angle_get_value(&angle_X, &angle_Y, &angle_Z, 0) == SYSTEM_ANGLE_ERROR)
+    {}
     else
     {
-        sprintf(data, "Angle X: %.2f, Angle Y: %.2f, Angle Z: %.2f\r\n", angle_X, angle_Y, angle_Z);
+        sprintf(data, "%.2f\t%.2f\t%.2f\n", angle_X, angle_Y, angle_Z);
         HAL_UART_Transmit(&huart1, (uint8_t*) data, strlen(data), HAL_MAX_DELAY);
     }
     HAL_Delay(50);
